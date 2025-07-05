@@ -1,13 +1,16 @@
 services:
   - type: web
-    name: ebay-new-listings-monitor
+    name: ebay-telegram-bot
     runtime: python
-    buildCommand: pip install feedparser python-telegram-bot
-    startCommand: python ebay_monitor.py
+    buildCommand: pip install -r requirements.txt
+    startCommand: python ebay_inventory_monitor.py
     envVars:
       - key: TELEGRAM_TOKEN
-        value: your_telegram_bot_token
+        value: ${TELEGRAM_TOKEN}
       - key: CHAT_ID
-        value: your_telegram_chat_id
+        value: ${CHAT_ID}
       - key: SELLER_USERNAME
-        value: ebay_seller_username
+        value: ${SELLER_USERNAME}
+      - key: PORT
+        value: 10000
+    plan: free
