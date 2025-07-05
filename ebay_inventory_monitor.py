@@ -1,8 +1,8 @@
 import asyncio
 import feedparser
 from datetime import datetime, timezone
-from telegram import Bot
-from telegram.ext import Application
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 import os
 import logging
 from collections import defaultdict
@@ -27,13 +27,12 @@ class EBayInventoryMonitor:
         # Tracking state
         self.known_items = defaultdict(dict)
         self.current_inventory = []
-        self.app = None
-        self.bot_app = None
+        self.application = None
 
     async def send_telegram_message(self, message, disable_preview=True):
         """Send message to Telegram with error handling"""
         try:
-            await self.bot_app.bot.send_message(
+            await self.application.bot.send_message(
                 chat_id=self.chat_id,
                 text=message,
                 disable_web_page_preview=disable_preview
@@ -80,13 +79,14 @@ class EBayInventoryMonitor:
             logger.error(f"Error fetching current listings: {e}")
             return []
 
-    async def send_current_inventory(self):
-        """Send current inventory at startup"""
+    async def send_current_inventory(self, update: Update = None):
+        """Send current inventory at startup or on command"""
         current_items = await self.get_current_listings()
         if not current_items:
             await self.send_telegram_message("⚠️ Could not fetch current listings")
             return
 
+        chat_id = update.effective_chat.id if update else self.chat_id
         message = f"📋 Current listings from {self.seller_name} (showing 10 of {len(current_items)}):\n\n"
         for item in current_items[:10]:
             message += (
@@ -99,9 +99,9 @@ class EBayInventoryMonitor:
         if len(current_items) > 10:
             message += f"➕ {len(current_items)-10} more items not shown\n"
         
-        await self.send_telegram_message(message)
+        await self.application.bot.send_message(chat_id=chat_id, text=message)
 
-    async def check_new_listings(self, context):
+    async def check_new_listings(self, context: ContextTypes.DEFAULT_TYPE):
         """Check for new listings (callback for job queue)"""
         try:
             feed = feedparser.parse(f"https://www.ebay.com/sch/{self.seller_name}/m.html?_rss=1&_sop=10")
@@ -133,6 +133,19 @@ class EBayInventoryMonitor:
         except Exception as e:
             logger.error(f"Error checking new listings: {e}")
 
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for /start command"""
+        await update.message.reply_text(
+            f"🛍️ Monitoring eBay seller: {self.seller_name}\n\n"
+            "I'll notify you of new listings!\n"
+            "Fetching current inventory..."
+        )
+        await self.send_current_inventory(update)
+
+    async def inventory_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for /inventory command"""
+        await self.send_current_inventory(update)
+
     async def startup(self, application):
         """Run startup tasks"""
         await self.send_telegram_message(
@@ -151,21 +164,21 @@ class EBayInventoryMonitor:
     async def run(self):
         """Main application runner"""
         # Create Telegram application
-        self.bot_app = Application.builder().token(self.telegram_token).build()
-        
-        # Add startup handler
-        self.bot_app.add_handler(
-            type("StartupHandler", (), {
-                "check_update": lambda _: None,
-                "handle_update": lambda _, __: None
-            })()
+        self.application = (
+            Application.builder()
+            .token(self.telegram_token)
+            .post_init(self.startup)
+            .build()
         )
-        self.bot_app.post_init = self.startup
+        
+        # Register command handlers
+        self.application.add_handler(CommandHandler("start", self.start_command))
+        self.application.add_handler(CommandHandler("inventory", self.inventory_command))
         
         # Start web server and bot
         await asyncio.gather(
             self.start_web_server(),
-            self.bot_app.run_polling()
+            self.application.run_polling()
         )
 
 if __name__ == "__main__":
