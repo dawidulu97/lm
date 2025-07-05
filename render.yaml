@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ebay-telegram-bot
+    name: ebay-monitor-worker
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python ebay_inventory_monitor.py
@@ -11,6 +11,4 @@ services:
         value: ${CHAT_ID}
       - key: SELLER_USERNAME
         value: ${SELLER_USERNAME}
-      - key: PORT
-        value: 10000
     plan: free
