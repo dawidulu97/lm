@@ -1,15 +1,17 @@
+# render.yaml
 services:
   - type: web
-    name: ebay-inventory-monitor
+    name: ebay-monitor-web
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python ebay_inventory_monitor.py
+    startCommand: gunicorn app:create_app() --threads 4
     envVars:
       - key: TELEGRAM_TOKEN
-        value: your_bot_token
+        value: ${TELEGRAM_TOKEN}
       - key: CHAT_ID
-        value: your_chat_id
+        value: ${CHAT_ID}
       - key: SELLER_USERNAME
-        value: ebay_seller_id
-      - key: POLL_INTERVAL
-        value: "900"  # 15 minutes in seconds
+        value: ${SELLER_USERNAME}
+      - key: SECRET_KEY
+        generateValue: true
+    plan: free
