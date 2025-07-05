@@ -1,17 +1,13 @@
-# render.yaml
 services:
   - type: web
-    name: ebay-monitor-web
+    name: ebay-new-listings-monitor
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:create_app() --threads 4
+    buildCommand: pip install feedparser python-telegram-bot
+    startCommand: python ebay_monitor.py
     envVars:
       - key: TELEGRAM_TOKEN
-        value: ${TELEGRAM_TOKEN}
+        value: your_telegram_bot_token
       - key: CHAT_ID
-        value: ${CHAT_ID}
+        value: your_telegram_chat_id
       - key: SELLER_USERNAME
-        value: ${SELLER_USERNAME}
-      - key: SECRET_KEY
-        generateValue: true
-    plan: free
+        value: ebay_seller_username
