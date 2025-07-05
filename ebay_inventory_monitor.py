@@ -174,34 +174,21 @@ class EBayInventoryMonitor:
             return
             
         logger.info("Shutting down gracefully...")
-        self.shutdown_event.set()
         self.is_running = False
         
-        try:
-            if self.application and self.application.running:
-                await self.application.stop()
-                await self.application.shutdown()
-        except Exception as e:
-            logger.error(f"Error shutting down application: {e}")
+        # Shutdown Telegram bot
+        if self.application and self.application.running:
+            await self.application.stop()
+            await self.application.shutdown()
         
-        try:
-            if self.site:
-                await self.site.stop()
-            if self.runner:
-                await self.runner.cleanup()
-        except Exception as e:
-            logger.error(f"Error shutting down web server: {e}")
+        # Shutdown web server
+        if self.site:
+            await self.site.stop()
+        if self.runner:
+            await self.runner.cleanup()
 
-    async def run(self):
-        """Main application runner"""
-        # Setup signal handlers
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig,
-                lambda: asyncio.create_task(self.shutdown())
-            )
-
+    async def run_application(self):
+        """Run the main application components"""
         # Create Telegram application
         self.application = (
             Application.builder()
@@ -214,21 +201,13 @@ class EBayInventoryMonitor:
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("inventory", self.inventory_command))
         
-        try:
-            # Start web server and bot
-            await asyncio.gather(
-                self.start_web_server(),
-                self.application.run_polling(),
-                self.shutdown_event.wait()  # Wait for shutdown signal
-            )
-        except asyncio.CancelledError:
-            logger.info("Application was cancelled")
-        except Exception as e:
-            logger.error(f"Error in main loop: {e}")
-        finally:
-            await self.shutdown()
+        # Start web server
+        await self.start_web_server()
+        
+        # Run Telegram bot
+        await self.application.run_polling()
 
-def main():
+async def main():
     # Verify required environment variables
     required_vars = ['TELEGRAM_TOKEN', 'CHAT_ID', 'SELLER_USERNAME']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -239,13 +218,28 @@ def main():
     
     monitor = EBayInventoryMonitor()
     
+    # Setup signal handlers
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(
+            sig,
+            lambda: asyncio.create_task(monitor.shutdown())
+        )
+
     try:
-        asyncio.run(monitor.run())
+        await monitor.run_application()
+    except asyncio.CancelledError:
+        logger.info("Application was cancelled")
+    except Exception as e:
+        logger.error(f"Error in main loop: {e}")
+    finally:
+        await monitor.shutdown()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Monitor stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         exit(1)
-
-if __name__ == "__main__":
-    main()
