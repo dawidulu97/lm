@@ -1,13 +1,10 @@
-import asyncio
 import feedparser
+import time
 from datetime import datetime, timezone
-from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Bot
 import os
 import logging
 from collections import defaultdict
-from aiohttp import web
-import signal
 
 # Configure logging
 logging.basicConfig(
@@ -22,46 +19,21 @@ class EBayInventoryMonitor:
         self.telegram_token = os.getenv('TELEGRAM_TOKEN')
         self.chat_id = os.getenv('CHAT_ID')
         self.seller_name = os.getenv('SELLER_USERNAME')
-        self.poll_interval = int(os.getenv('POLL_INTERVAL', '900'))  # Default 15 minutes
-        self.port = int(os.getenv('PORT', 10000))
+        self.poll_interval = 900  # 15 minutes
         
         # Tracking state
         self.known_items = defaultdict(dict)
-        self.current_inventory = []
-        self.application = None
-        self.runner = None
-        self.site = None
-        self.shutdown_event = asyncio.Event()
-        self.is_running = False
+        self.bot = Bot(token=self.telegram_token)
 
-    async def send_telegram_message(self, message, disable_preview=True):
+    def send_telegram_message(self, message):
         """Send message to Telegram with error handling"""
         try:
-            if self.application and self.application.running:
-                await self.application.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=message,
-                    disable_web_page_preview=disable_preview
-                )
-                logger.info("Telegram message sent successfully")
+            self.bot.send_message(chat_id=self.chat_id, text=message)
+            logger.info("Telegram message sent successfully")
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
 
-    async def health_check(self, request):
-        """Health check endpoint for Render"""
-        return web.Response(text="OK")
-
-    async def start_web_server(self):
-        """Start a simple web server for port binding"""
-        app = web.Application()
-        app.router.add_get('/health', self.health_check)
-        self.runner = web.AppRunner(app)
-        await self.runner.setup()
-        self.site = web.TCPSite(self.runner, '0.0.0.0', self.port)
-        await self.site.start()
-        logger.info(f"Web server started on port {self.port}")
-
-    async def get_current_listings(self):
+    def get_current_listings(self):
         """Get all current listings from RSS feed"""
         try:
             feed = feedparser.parse(f"https://www.ebay.com/sch/{self.seller_name}/m.html?_rss=1&_sop=10")
@@ -85,30 +57,8 @@ class EBayInventoryMonitor:
             logger.error(f"Error fetching current listings: {e}")
             return []
 
-    async def send_current_inventory(self, update: Update = None):
-        """Send current inventory at startup or on command"""
-        current_items = await self.get_current_listings()
-        if not current_items:
-            await self.send_telegram_message("⚠️ Could not fetch current listings")
-            return
-
-        chat_id = update.effective_chat.id if update else self.chat_id
-        message = f"📋 Current listings from {self.seller_name} (showing 10 of {len(current_items)}):\n\n"
-        for item in current_items[:10]:
-            message += (
-                f"🏷 {item['title']}\n"
-                f"💰 {item['price']}\n"
-                f"⏰ {item['time']}\n"
-                f"🔗 {item['link']}\n\n"
-            )
-        
-        if len(current_items) > 10:
-            message += f"➕ {len(current_items)-10} more items not shown\n"
-        
-        await self.application.bot.send_message(chat_id=chat_id, text=message)
-
-    async def check_new_listings(self, context: ContextTypes.DEFAULT_TYPE):
-        """Check for new listings (callback for job queue)"""
+    def check_new_listings(self):
+        """Check for new listings"""
         try:
             feed = feedparser.parse(f"https://www.ebay.com/sch/{self.seller_name}/m.html?_rss=1&_sop=10")
             new_items = []
@@ -127,87 +77,55 @@ class EBayInventoryMonitor:
             
             if new_items:
                 message = f"🆕 New listings from {self.seller_name}:\n\n"
-                for item in new_items[:5]:
+                for item in new_items[:5]:  # Limit to 5 items
                     message += (
                         f"📌 {item['title']}\n"
                         f"💰 {item['price']}\n"
                         f"⏰ {item['time']}\n"
                         f"🔗 {item['link']}\n\n"
                     )
-                await self.send_telegram_message(message.strip())
+                self.send_telegram_message(message.strip())
                 
         except Exception as e:
             logger.error(f"Error checking new listings: {e}")
 
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handler for /start command"""
-        await update.message.reply_text(
-            f"🛍️ Monitoring eBay seller: {self.seller_name}\n\n"
-            "I'll notify you of new listings!\n"
-            "Fetching current inventory..."
-        )
-        await self.send_current_inventory(update)
-
-    async def inventory_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handler for /inventory command"""
-        await self.send_current_inventory(update)
-
-    async def startup(self, application):
-        """Run startup tasks"""
-        self.is_running = True
-        await self.send_telegram_message(
+    def run(self):
+        """Main monitoring loop"""
+        # Send startup message
+        self.send_telegram_message(
             f"🟢 eBay Listings Monitor Started!\n"
             f"• Seller: {self.seller_name}\n"
             f"• Started at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
             f"• Checking every {self.poll_interval//60} minutes"
         )
-        await self.send_current_inventory()
-        application.job_queue.run_repeating(
-            self.check_new_listings,
-            interval=self.poll_interval,
-            first=10
-        )
+        
+        # Initial inventory check
+        current_items = self.get_current_listings()
+        if current_items:
+            message = f"📋 Current listings from {self.seller_name} (showing 10 of {len(current_items)}):\n\n"
+            for item in current_items[:10]:
+                message += (
+                    f"🏷 {item['title']}\n"
+                    f"💰 {item['price']}\n"
+                    f"⏰ {item['time']}\n"
+                    f"🔗 {item['link']}\n\n"
+                )
+            self.send_telegram_message(message)
+        
+        # Continuous monitoring
+        logger.info("Starting monitoring loop...")
+        while True:
+            try:
+                self.check_new_listings()
+                time.sleep(self.poll_interval)
+            except KeyboardInterrupt:
+                logger.info("Monitor stopped by user")
+                break
+            except Exception as e:
+                logger.error(f"Monitoring error: {e}")
+                time.sleep(300)  # Wait 5 minutes after error
 
-    async def shutdown(self):
-        """Cleanup tasks"""
-        if not self.is_running:
-            return
-            
-        logger.info("Shutting down gracefully...")
-        self.is_running = False
-        
-        # Shutdown Telegram bot
-        if self.application and self.application.running:
-            await self.application.stop()
-            await self.application.shutdown()
-        
-        # Shutdown web server
-        if self.site:
-            await self.site.stop()
-        if self.runner:
-            await self.runner.cleanup()
-
-    async def run_application(self):
-        """Run the main application components"""
-        # Create Telegram application
-        self.application = (
-            Application.builder()
-            .token(self.telegram_token)
-            .post_init(self.startup)
-            .build()
-        )
-        
-        # Register command handlers
-        self.application.add_handler(CommandHandler("start", self.start_command))
-        self.application.add_handler(CommandHandler("inventory", self.inventory_command))
-        
-        # Start web server
-        await self.start_web_server()
-        
-        # Run Telegram bot
-        await self.application.run_polling()
-
-async def main():
+if __name__ == "__main__":
     # Verify required environment variables
     required_vars = ['TELEGRAM_TOKEN', 'CHAT_ID', 'SELLER_USERNAME']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -216,30 +134,8 @@ async def main():
         logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
         exit(1)
     
-    monitor = EBayInventoryMonitor()
-    
-    # Setup signal handlers
-    loop = asyncio.get_event_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(
-            sig,
-            lambda: asyncio.create_task(monitor.shutdown())
-        )
-
     try:
-        await monitor.run_application()
-    except asyncio.CancelledError:
-        logger.info("Application was cancelled")
-    except Exception as e:
-        logger.error(f"Error in main loop: {e}")
-    finally:
-        await monitor.shutdown()
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Monitor stopped by user")
+        EBayInventoryMonitor().run()
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         exit(1)
