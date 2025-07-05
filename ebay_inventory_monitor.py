@@ -32,16 +32,18 @@ class EBayInventoryMonitor:
         self.runner = None
         self.site = None
         self.shutdown_event = asyncio.Event()
+        self.is_running = False
 
     async def send_telegram_message(self, message, disable_preview=True):
         """Send message to Telegram with error handling"""
         try:
-            await self.application.bot.send_message(
-                chat_id=self.chat_id,
-                text=message,
-                disable_web_page_preview=disable_preview
-            )
-            logger.info("Telegram message sent successfully")
+            if self.application and self.application.running:
+                await self.application.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=message,
+                    disable_web_page_preview=disable_preview
+                )
+                logger.info("Telegram message sent successfully")
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
 
@@ -152,6 +154,7 @@ class EBayInventoryMonitor:
 
     async def startup(self, application):
         """Run startup tasks"""
+        self.is_running = True
         await self.send_telegram_message(
             f"🟢 eBay Listings Monitor Started!\n"
             f"• Seller: {self.seller_name}\n"
@@ -165,20 +168,29 @@ class EBayInventoryMonitor:
             first=10
         )
 
-    async def shutdown(self, signal=None):
+    async def shutdown(self):
         """Cleanup tasks"""
+        if not self.is_running:
+            return
+            
         logger.info("Shutting down gracefully...")
         self.shutdown_event.set()
+        self.is_running = False
         
-        if self.application:
-            await self.application.stop()
-            await self.application.shutdown()
+        try:
+            if self.application and self.application.running:
+                await self.application.stop()
+                await self.application.shutdown()
+        except Exception as e:
+            logger.error(f"Error shutting down application: {e}")
         
-        if self.site:
-            await self.site.stop()
-        
-        if self.runner:
-            await self.runner.cleanup()
+        try:
+            if self.site:
+                await self.site.stop()
+            if self.runner:
+                await self.runner.cleanup()
+        except Exception as e:
+            logger.error(f"Error shutting down web server: {e}")
 
     async def run(self):
         """Main application runner"""
@@ -211,10 +223,12 @@ class EBayInventoryMonitor:
             )
         except asyncio.CancelledError:
             logger.info("Application was cancelled")
+        except Exception as e:
+            logger.error(f"Error in main loop: {e}")
         finally:
             await self.shutdown()
 
-if __name__ == "__main__":
+def main():
     # Verify required environment variables
     required_vars = ['TELEGRAM_TOKEN', 'CHAT_ID', 'SELLER_USERNAME']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -227,6 +241,11 @@ if __name__ == "__main__":
     
     try:
         asyncio.run(monitor.run())
+    except KeyboardInterrupt:
+        logger.info("Monitor stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         exit(1)
+
+if __name__ == "__main__":
+    main()
