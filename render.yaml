@@ -1,19 +1,13 @@
 services:
   - type: worker
-    name: ebay-seller-monitor
+    name: ebay-new-listings-monitor
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install feedparser python-telegram-bot
     startCommand: python ebay_monitor.py
     envVars:
       - key: TELEGRAM_TOKEN
         value: your_telegram_bot_token
       - key: CHAT_ID
         value: your_telegram_chat_id
-      - key: EBAY_APP_ID
-        value: your_ebay_app_id
-      - key: EBAY_CERT_ID
-        value: your_ebay_cert_id
-      - key: EBAY_DEV_ID
-        value: your_ebay_dev_id
       - key: SELLER_USERNAME
-        value: ebay_seller_username_to_monitor
+        value: ebay_seller_username
