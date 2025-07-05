@@ -1,7 +1,7 @@
 import feedparser
 import time
 from datetime import datetime, timezone
-from telegram import Bot
+import requests
 import os
 import logging
 from collections import defaultdict
@@ -23,12 +23,18 @@ class EBayInventoryMonitor:
         
         # Tracking state
         self.known_items = defaultdict(dict)
-        self.bot = Bot(token=self.telegram_token)
 
     def send_telegram_message(self, message):
-        """Send message to Telegram with error handling"""
+        """Send message to Telegram using requests (synchronous)"""
         try:
-            self.bot.send_message(chat_id=self.chat_id, text=message)
+            url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
+            params = {
+                'chat_id': self.chat_id,
+                'text': message,
+                'disable_web_page_preview': True
+            }
+            response = requests.post(url, params=params)
+            response.raise_for_status()
             logger.info("Telegram message sent successfully")
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
