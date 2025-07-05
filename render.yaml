@@ -1,13 +1,15 @@
 services:
   - type: worker
-    name: ebay-new-listings-monitor
+    name: ebay-inventory-monitor
     runtime: python
-    buildCommand: pip install feedparser python-telegram-bot
-    startCommand: python ebay_monitor.py
+    buildCommand: pip install -r requirements.txt
+    startCommand: python ebay_inventory_monitor.py
     envVars:
       - key: TELEGRAM_TOKEN
-        value: your_telegram_bot_token
+        value: your_bot_token
       - key: CHAT_ID
-        value: your_telegram_chat_id
+        value: your_chat_id
       - key: SELLER_USERNAME
-        value: ebay_seller_username
+        value: ebay_seller_id
+      - key: POLL_INTERVAL
+        value: "900"  # 15 minutes in seconds
