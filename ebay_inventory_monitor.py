@@ -1,6 +1,6 @@
 import asyncio
 import feedparser
-from datetime import datetime
+from datetime import datetime, timezone
 from telegram import Bot
 import os
 import logging
@@ -51,8 +51,32 @@ class EBayInventoryMonitor:
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
 
+    def get_current_listings(self):
+        """Get all current listings from RSS feed"""
+        try:
+            feed = feedparser.parse(f"https://www.ebay.com/sch/{self.seller_name}/m.html?_rss=1&_sop=10")
+            current_items = []
+            
+            for entry in feed.entries[:50]:  # Get first 50 listings
+                item_id = entry.link.split('/')[-1].split('?')[0]
+                current_items.append({
+                    'id': item_id,
+                    'title': entry.title,
+                    'price': entry.get('ev_price', 'N/A'),
+                    'link': entry.link,
+                    'time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+                })
+                self.known_items[item_id] = current_items[-1]
+            
+            logger.info(f"Found {len(current_items)} current listings")
+            return current_items
+            
+        except Exception as e:
+            logger.error(f"Error fetching current listings: {e}")
+            return []
+
     def get_new_items(self):
-        """Check RSS feed for items listed after our last check time"""
+        """Check for new items not in known_items"""
         try:
             feed = feedparser.parse(f"https://www.ebay.com/sch/{self.seller_name}/m.html?_rss=1&_sop=10")
             new_items = []
@@ -61,10 +85,11 @@ class EBayInventoryMonitor:
                 item_id = entry.link.split('/')[-1].split('?')[0]
                 if item_id not in self.known_items:
                     new_items.append({
+                        'id': item_id,
                         'title': entry.title,
                         'price': entry.get('ev_price', 'N/A'),
                         'link': entry.link,
-                        'time': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+                        'time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
                     })
                     self.known_items[item_id] = new_items[-1]
             
@@ -72,8 +97,29 @@ class EBayInventoryMonitor:
             return new_items
             
         except Exception as e:
-            logger.error(f"Error checking RSS feed: {e}")
+            logger.error(f"Error checking for new items: {e}")
             return []
+
+    async def send_current_inventory(self):
+        """Send current inventory at startup"""
+        current_items = self.get_current_listings()
+        if not current_items:
+            await self.send_telegram_message("⚠️ Could not fetch current listings")
+            return
+
+        message = f"📋 Current listings from {self.seller_name} (showing 10 of {len(current_items)}):\n\n"
+        for item in current_items[:10]:
+            message += (
+                f"🏷 {item['title']}\n"
+                f"💰 {item['price']}\n"
+                f"⏰ {item['time']}\n"
+                f"🔗 {item['link']}\n\n"
+            )
+        
+        if len(current_items) > 10:
+            message += f"➕ {len(current_items)-10} more items not shown\n"
+        
+        await self.send_telegram_message(message)
 
     async def check_and_notify(self):
         """Check for new items and send notifications"""
@@ -84,7 +130,7 @@ class EBayInventoryMonitor:
                 message += (
                     f"📌 {item['title']}\n"
                     f"💰 {item['price']}\n"
-                    f"⏰ Listed: {item['time']}\n"
+                    f"⏰ {item['time']}\n"
                     f"🔗 {item['link']}\n\n"
                 )
             await self.send_telegram_message(message.strip())
@@ -93,12 +139,15 @@ class EBayInventoryMonitor:
         """Main async monitoring loop"""
         # Send startup message
         startup_msg = (
-            f"🟢 eBay New Listings Monitor Started!\n"
+            f"🟢 eBay Listings Monitor Started!\n"
             f"• Seller: {self.seller_name}\n"
-            f"• Monitoring started at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+            f"• Monitoring started at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
             f"• Checking every {self.poll_interval//60} minutes"
         )
         await self.send_telegram_message(startup_msg)
+        
+        # Send current inventory
+        await self.send_current_inventory()
         
         logger.info("Starting monitoring loop...")
         while True:
