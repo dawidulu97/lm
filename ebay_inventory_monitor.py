@@ -7,6 +7,7 @@ import os
 import logging
 from collections import defaultdict
 from aiohttp import web
+import signal
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +29,9 @@ class EBayInventoryMonitor:
         self.known_items = defaultdict(dict)
         self.current_inventory = []
         self.application = None
+        self.runner = None
+        self.site = None
+        self.shutdown_event = asyncio.Event()
 
     async def send_telegram_message(self, message, disable_preview=True):
         """Send message to Telegram with error handling"""
@@ -49,10 +53,10 @@ class EBayInventoryMonitor:
         """Start a simple web server for port binding"""
         app = web.Application()
         app.router.add_get('/health', self.health_check)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', self.port)
-        await site.start()
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        self.site = web.TCPSite(self.runner, '0.0.0.0', self.port)
+        await self.site.start()
         logger.info(f"Web server started on port {self.port}")
 
     async def get_current_listings(self):
@@ -161,8 +165,31 @@ class EBayInventoryMonitor:
             first=10
         )
 
+    async def shutdown(self, signal=None):
+        """Cleanup tasks"""
+        logger.info("Shutting down gracefully...")
+        self.shutdown_event.set()
+        
+        if self.application:
+            await self.application.stop()
+            await self.application.shutdown()
+        
+        if self.site:
+            await self.site.stop()
+        
+        if self.runner:
+            await self.runner.cleanup()
+
     async def run(self):
         """Main application runner"""
+        # Setup signal handlers
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(
+                sig,
+                lambda: asyncio.create_task(self.shutdown())
+            )
+
         # Create Telegram application
         self.application = (
             Application.builder()
@@ -175,11 +202,17 @@ class EBayInventoryMonitor:
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("inventory", self.inventory_command))
         
-        # Start web server and bot
-        await asyncio.gather(
-            self.start_web_server(),
-            self.application.run_polling()
-        )
+        try:
+            # Start web server and bot
+            await asyncio.gather(
+                self.start_web_server(),
+                self.application.run_polling(),
+                self.shutdown_event.wait()  # Wait for shutdown signal
+            )
+        except asyncio.CancelledError:
+            logger.info("Application was cancelled")
+        finally:
+            await self.shutdown()
 
 if __name__ == "__main__":
     # Verify required environment variables
@@ -194,8 +227,6 @@ if __name__ == "__main__":
     
     try:
         asyncio.run(monitor.run())
-    except KeyboardInterrupt:
-        logger.info("Monitor stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         exit(1)
