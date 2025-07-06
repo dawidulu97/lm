@@ -1,5 +1,16 @@
+# Workaround for Python 3.13 missing imghdr
+import sys
+import warnings
+from unittest.mock import MagicMock
+
+if sys.version_info >= (3, 13):
+    sys.modules['imghdr'] = MagicMock()
+    warnings.warn("imghdr workaround applied for Python 3.13")
+
+# Rest of your imports...
 from flask import Flask, jsonify
 from bot import EbayBot
+
 import threading
 
 app = Flask(__name__)
