@@ -1,0 +1,48 @@
+# render.yaml
+
+services:
+  - type: web
+    name: ebay-bot-web
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: TELEGRAM_TOKEN
+        fromGroup: telegram-credentials
+      - key: TELEGRAM_CHAT_ID
+        fromGroup: ebay-config
+      - key: EBAY_APP_ID
+        fromGroup: ebay-config
+      - key: EBAY_CERT_ID
+        fromGroup: ebay-config
+      - key: EBAY_DEV_ID
+        fromGroup: ebay-config
+      - key: EBAY_AUTH_TOKEN
+        fromGroup: ebay-config
+      - key: EBAY_REFRESH_TOKEN
+        fromGroup: ebay-config
+      - key: POLL_INTERVAL
+        value: "300"
+
+  - type: worker
+    name: ebay-bot-worker
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        fromGroup: telegram-credentials
+      - key: TELEGRAM_CHAT_ID
+        fromGroup: ebay-config
+      - key: EBAY_APP_ID
+        fromGroup: ebay-config
+      - key: EBAY_CERT_ID
+        fromGroup: ebay-config
+      - key: EBAY_DEV_ID
+        fromGroup: ebay-config
+      - key: EBAY_AUTH_TOKEN
+        fromGroup: ebay-config
+      - key: EBAY_REFRESH_TOKEN
+        fromGroup: ebay-config
+      - key: POLL_INTERVAL
+        value: "300"
